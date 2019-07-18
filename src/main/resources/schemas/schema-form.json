@@ -1,0 +1,36 @@
+{
+  "type" : "object",
+  "id" : "urn:jsonschema:io:gravitee:policy:cbr:configuration:ContentBasedRoutingPolicyConfiguration",
+  "properties" : {
+    "jsonpathExpression" : {
+      "title": "JSONPATH Expression",
+      "description": "Expression is used to extract a key value for routing table from JSON body",
+      "type" : "string"
+    },
+    "routingTable" : {
+      "title": "Routing Table",
+      "description": "Routing Table - json key-value object where value should be endpoint URL",
+      "type" : "string",
+      "x-schema-form": {
+        "type": "codemirror",
+        "codemirrorOptions": {
+          "placeholder": "Place your JSON routing table here or drag'n'drop a specification file",
+          "lineWrapping": true,
+          "lineNumbers": true,
+          "allowDropFileTypes": true,
+          "autoCloseTags": true,
+          "mode": "javascript"
+        }
+      }
+    },
+    "fallbackUrl" : {
+      "title": "Fallback Url",
+      "description": "If url was not found in the routing table",
+      "type" : "string"
+    }
+  },
+  "required": [
+    "jsonpathExpression",
+    "routingTable"
+  ]
+}
