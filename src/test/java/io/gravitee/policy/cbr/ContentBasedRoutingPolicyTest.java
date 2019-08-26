@@ -15,13 +15,37 @@
  */
 package io.gravitee.policy.cbr;
 
+import io.gravitee.common.http.HttpMethod;
+import io.gravitee.gateway.api.ExecutionContext;
+import io.gravitee.gateway.api.Request;
+import io.gravitee.gateway.api.Response;
+import io.vertx.core.Vertx;
 import org.junit.Test;
+import org.mockito.Mock;
+
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class ContentBasedRoutingPolicyTest {
 
-    @Test
-    public void testOnRequest() throws Exception {
+    @Mock
+    private ContentBasedRoutingPolicyConfiguration configuration;
 
+    @Test
+    public void testThreadLock() throws Exception {
+
+        ExecutionContext executionContext = mock(ExecutionContext.class);t
+        Request request = mock(Request.class);
+        when(request.method()).thenReturn(HttpMethod.POST);
+        Response response = mock(Response.class);
+
+        when(executionContext.getComponent(Vertx.class)).thenReturn(Vertx.vertx());
+        when(executionContext.request()).thenReturn(request);
+        when(executionContext.response()).thenReturn(response);
+
+        ContentBasedRoutingConnection connection = new ContentBasedRoutingConnection(executionContext, configuration);
+
+        connection.end();
     }
 
     @Test
