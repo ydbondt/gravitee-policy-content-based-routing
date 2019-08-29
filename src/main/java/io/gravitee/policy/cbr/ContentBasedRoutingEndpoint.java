@@ -31,14 +31,17 @@ public abstract class ContentBasedRoutingEndpoint {
 
     public static List<String> getEndpoints(String messageBody, ContentBasedRoutingPolicyConfiguration configuration) {
         String extractResult = JsonPath.parse(messageBody).read(configuration.getJsonpathExpression(), String.class);
-        logger.info("Extract result: {}", extractResult);
         Map<String, List<String>> routingTable = new Gson().fromJson(configuration.getRoutingTable(), Map.class);
 
+        List<String> endpoints = null;
         if (routingTable.containsKey(extractResult)) {
-            return routingTable.get(extractResult);
+            endpoints = routingTable.get(extractResult);
         } else {
-            logger.info("No Route found for {}", extractResult);
-            return Collections.singletonList(configuration.getFallbackUrl());
+            logger.debug("No Route found for {}", extractResult);
+            endpoints = Collections.singletonList(configuration.getFallbackUrl());
         }
+
+        logger.info("{} -> {}", extractResult, endpoints);
+        return endpoints;
     }
 }

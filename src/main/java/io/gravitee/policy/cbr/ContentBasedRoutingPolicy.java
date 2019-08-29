@@ -48,36 +48,6 @@ public class ContentBasedRoutingPolicy {
         this.configuration = configuration;
     }
 
-    //@OnRequestContent
-    public ReadWriteStream onRequestContent(Request request, Response response, ExecutionContext executionContext, PolicyChain policyChain) {
-
-        return TransformableRequestStreamBuilder
-                .on(request)
-                .transform(buffer -> {
-                    String messageBody = buffer.toString();
-                    try {
-
-                        String extractResult = JsonPath.parse(messageBody).read(configuration.getJsonpathExpression(), String.class);
-                        logger.info("Extract result: {}", extractResult);
-                        Map<String, String> routingTable =  new Gson().fromJson(configuration.getRoutingTable(), Map.class);
-
-                        if (!routingTable.containsKey(extractResult)) {
-                            logger.info("No Route found for {}", extractResult);
-                            return buffer;
-                        }
-                        String endpoint = routingTable.get(extractResult);
-                        // Set final endpoint
-                        executionContext.setAttribute(ExecutionContext.ATTR_REQUEST_ENDPOINT, endpoint);
-                        logger.info("Route request to {}", endpoint);
-                    } catch (Throwable t) {
-                        throw new TransformationException("Unable to run parse content: " + t.getMessage(), t);
-                    }
-
-                    return buffer;
-                })
-                .build();
-    }
-
     @OnRequest
     public void onRequest(Request request, Response response, ExecutionContext executionContext, PolicyChain policyChain) {
 

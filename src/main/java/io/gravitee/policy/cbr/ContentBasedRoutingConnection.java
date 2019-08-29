@@ -25,6 +25,7 @@ import io.gravitee.gateway.api.stream.WriteStream;
 import io.vertx.core.MultiMap;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpClient;
+import io.vertx.core.http.HttpClientOptions;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpMethod;
 import org.slf4j.Logger;
@@ -45,25 +46,20 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
     private final ContentBasedRoutingPolicyConfiguration configuration;
     private final ExecutionContext context;
 
-    private final HttpMethod httpMethod;
     private final Request originalRequest;
-    private final Map<String, String> originalHeaders;
-
     private final Vertx vertx;
 
     public ContentBasedRoutingConnection(ExecutionContext executionContext, ContentBasedRoutingPolicyConfiguration configuration) {
         this.configuration = configuration;
         this.context = executionContext;
         this.originalRequest = executionContext.request();
-        this.httpMethod = HttpMethod.valueOf(originalRequest.method().name());
-        this.originalHeaders = originalRequest.headers().toSingleValueMap();
         this.vertx = executionContext.getComponent(Vertx.class);
     }
 
     @Override
     public WriteStream<Buffer> write(Buffer chunk) {
         if (content == null) {
-            this.content = Buffer.buffer();
+            content = Buffer.buffer();
         }
         content.appendBuffer(chunk);
         return this;
@@ -72,22 +68,28 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
     @Override
     public void end() {
 
+        HttpMethod httpMethod = HttpMethod.valueOf(originalRequest.method().name());
+        Map<String, String> originalHeaders = originalRequest.headers().toSingleValueMap();
         String messageBody = getMessageBody();
+
         logger.debug("Message body: " + messageBody + ", method: " + httpMethod);
 
         if (!StringUtils.isEmpty(messageBody) && isJsonCall()) {
-            ContentBasedRoutingEndpoint.getEndpoints(messageBody, configuration)
-                    .forEach(endpoint -> callUrl(endpoint, messageBody, httpMethod, originalHeaders));
+            vertx.executeBlocking(promise -> {
+                ContentBasedRoutingEndpoint.getEndpoints(messageBody, configuration)
+                        .forEach(endpoint -> callUrl(endpoint, messageBody, httpMethod, originalHeaders));
+                promise.complete();
+            }, false, null);
         }
 
         responseHandler.handle(new SuccessResponse());
     }
 
     private String getMessageBody() {
-        if (this.content != null) {
-            return this.content.toString(Charset.forName("UTF-8"));
+        if (content != null) {
+            return content.toString();
         }
-        return null;
+        return "";
     }
 
     private boolean isJsonCall() {
@@ -98,47 +100,42 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
     }
 
     private void callUrl(String url, String messageBody, HttpMethod httpMethod, Map<String, String> originalHeaders) {
-        logger.info("Target URL: " + url);
+        logger.debug("Target URL: " + url);
+        HttpClientOptions options = new HttpClientOptions().setConnectTimeout(2000);
         HttpClient httpClient = vertx.createHttpClient();
 
-        try {
-            URL urlObject = new URL(url);
-
-            HttpClientRequest clientRequest = httpClient.requestAbs(httpMethod, url, done -> {
-                logger.info("Response code: " + done.statusCode() + ", statusMessage: " + done.statusMessage() );
-                done.bodyHandler(buffer -> {
-                    logger.info("Body: " + buffer.getString(0, buffer.length()));
-                    httpClient.close();
-                });
-            });
-
-            MultiMap headers = clientRequest.headers();
-            headers.setAll(originalHeaders);
-
-            clientRequest.connectionHandler(connection -> {
-                connection.exceptionHandler(ex -> {
-                    logger.error("Connection exception ", ex);
-                    httpClient.close();
-                });
-            });
-
-            clientRequest.exceptionHandler(event -> {
-                logger.error("Server exception", event);
+        HttpClientRequest clientRequest = httpClient.requestAbs(httpMethod, url, done -> {
+            logger.debug("Response code: " + done.statusCode() + ", statusMessage: " + done.statusMessage() );
+            done.bodyHandler(buffer -> {
+                logger.debug("Body: " + buffer.getString(0, buffer.length()));
                 httpClient.close();
             });
+        });
+        clientRequest.setTimeout(2000);
 
-            if (!messageBody.isEmpty() && (originalRequest.method().equals(io.gravitee.common.http.HttpMethod.POST)
-                    || originalRequest.method().equals(io.gravitee.common.http.HttpMethod.PUT)
-                    || originalRequest.method().equals(io.gravitee.common.http.HttpMethod.PATCH))) {
-                clientRequest.write(messageBody);
-            }
+        MultiMap headers = clientRequest.headers();
+        headers.setAll(originalHeaders);
 
-            clientRequest.end();
+        clientRequest.connectionHandler(connection -> {
+            connection.exceptionHandler(ex -> {
+                logger.error("Connection exception ", ex);
+                httpClient.close();
+            });
+        });
 
+        clientRequest.exceptionHandler(event -> {
+            logger.error("Server exception", event);
+            httpClient.close();
+        });
 
-        } catch (MalformedURLException e) {
-            logger.debug("Invalid URL: " + url);
+        if (!messageBody.isEmpty() && (originalRequest.method().equals(io.gravitee.common.http.HttpMethod.POST)
+                || originalRequest.method().equals(io.gravitee.common.http.HttpMethod.PUT)
+                || originalRequest.method().equals(io.gravitee.common.http.HttpMethod.PATCH))) {
+            clientRequest.write(messageBody);
         }
+
+        clientRequest.end();
+
     }
 
     @Override
