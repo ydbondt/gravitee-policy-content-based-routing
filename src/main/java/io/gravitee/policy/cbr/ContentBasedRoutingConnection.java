@@ -15,8 +15,6 @@
  */
 package io.gravitee.policy.cbr;
 
-import com.google.gson.Gson;
-import com.jayway.jsonpath.JsonPath;
 import io.gravitee.gateway.api.ExecutionContext;
 import io.gravitee.gateway.api.Request;
 import io.gravitee.gateway.api.buffer.Buffer;
@@ -31,11 +29,11 @@ import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.util.StringUtils;
 
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.Collections;
-import java.util.List;
+import java.nio.charset.Charset;
 import java.util.Map;
 
 public class ContentBasedRoutingConnection implements ProxyConnection {
@@ -47,22 +45,25 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
     private final ContentBasedRoutingPolicyConfiguration configuration;
     private final ExecutionContext context;
 
-    private final HttpClient httpClient;
+    private final HttpMethod httpMethod;
     private final Request originalRequest;
+    private final Map<String, String> originalHeaders;
+
+    private final Vertx vertx;
 
     public ContentBasedRoutingConnection(ExecutionContext executionContext, ContentBasedRoutingPolicyConfiguration configuration) {
         this.configuration = configuration;
         this.context = executionContext;
-
-        originalRequest = executionContext.request();
-        Vertx vertx = executionContext.getComponent(Vertx.class);
-        this.httpClient = vertx.createHttpClient();
+        this.originalRequest = executionContext.request();
+        this.httpMethod = HttpMethod.valueOf(originalRequest.method().name());
+        this.originalHeaders = originalRequest.headers().toSingleValueMap();
+        this.vertx = executionContext.getComponent(Vertx.class);
     }
 
     @Override
     public WriteStream<Buffer> write(Buffer chunk) {
         if (content == null) {
-            content = Buffer.buffer();
+            this.content = Buffer.buffer();
         }
         content.appendBuffer(chunk);
         return this;
@@ -70,53 +71,44 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
 
     @Override
     public void end() {
-        String messageBody = (content != null) ? content.toString() : "";
-        HttpMethod httpMethod = HttpMethod.valueOf(originalRequest.method().name());
+
+        String messageBody = getMessageBody();
         logger.debug("Message body: " + messageBody + ", method: " + httpMethod);
-        try {
-            boolean hasJsonContentTypeHeader = false;
 
-            if (originalRequest.headers() != null && !originalRequest.headers().isEmpty()) {
-                String ctHeader = originalRequest.headers().contentType();
-                hasJsonContentTypeHeader = ctHeader != null && ctHeader.toLowerCase().equals(APPLICATION_JSON);
-            }
-
-            List<String> urls = null;
-
-            if (hasJsonContentTypeHeader) {
-                String extractResult = JsonPath.parse(messageBody).read(configuration.getJsonpathExpression(), String.class);
-                logger.info("Extract result: {}", extractResult);
-                Map<String, List<String>> routingTable = new Gson().fromJson(configuration.getRoutingTable(), Map.class);
-
-                if (routingTable.containsKey(extractResult)) {
-                    urls = routingTable.get(extractResult);
-                } else {
-                    logger.info("No Route found for {}", extractResult);
-                    urls = Collections.singletonList(configuration.getFallbackUrl());
-                }
-            }
-
-            if (urls != null) {
-                final Map<String, String> originalHeaders = originalRequest.headers().toSingleValueMap();
-                urls.forEach(url -> callUrl(url, messageBody, httpMethod, originalHeaders));
-            }
-
-        } catch (Exception e) {
-            logger.error("General exception: ", e);
+        if (!StringUtils.isEmpty(messageBody) && isJsonCall()) {
+            ContentBasedRoutingEndpoint.getEndpoints(messageBody, configuration)
+                    .forEach(endpoint -> callUrl(endpoint, messageBody, httpMethod, originalHeaders));
         }
 
         responseHandler.handle(new SuccessResponse());
     }
 
+    private String getMessageBody() {
+        if (this.content != null) {
+            return this.content.toString(Charset.forName("UTF-8"));
+        }
+        return null;
+    }
+
+    private boolean isJsonCall() {
+        return originalRequest.headers() != null
+                && !originalRequest.headers().isEmpty()
+                && originalRequest.headers().contentType() != null
+                && originalRequest.headers().contentType().toLowerCase().equals(APPLICATION_JSON);
+    }
+
     private void callUrl(String url, String messageBody, HttpMethod httpMethod, Map<String, String> originalHeaders) {
         logger.info("Target URL: " + url);
+        HttpClient httpClient = vertx.createHttpClient();
+
         try {
             URL urlObject = new URL(url);
 
             HttpClientRequest clientRequest = httpClient.requestAbs(httpMethod, url, done -> {
                 logger.info("Response code: " + done.statusCode() + ", statusMessage: " + done.statusMessage() );
                 done.bodyHandler(buffer -> {
-                    logger.debug("Body: " + buffer.getString(0, buffer.length()));
+                    logger.info("Body: " + buffer.getString(0, buffer.length()));
+                    httpClient.close();
                 });
             });
 
@@ -126,11 +118,13 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
             clientRequest.connectionHandler(connection -> {
                 connection.exceptionHandler(ex -> {
                     logger.error("Connection exception ", ex);
+                    httpClient.close();
                 });
             });
 
             clientRequest.exceptionHandler(event -> {
                 logger.error("Server exception", event);
+                httpClient.close();
             });
 
             if (!messageBody.isEmpty() && (originalRequest.method().equals(io.gravitee.common.http.HttpMethod.POST)
@@ -138,7 +132,10 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
                     || originalRequest.method().equals(io.gravitee.common.http.HttpMethod.PATCH))) {
                 clientRequest.write(messageBody);
             }
+
             clientRequest.end();
+
+
         } catch (MalformedURLException e) {
             logger.debug("Invalid URL: " + url);
         }
