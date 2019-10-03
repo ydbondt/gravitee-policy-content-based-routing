@@ -32,9 +32,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.nio.charset.Charset;
 import java.util.Map;
 
 public class ContentBasedRoutingConnection implements ProxyConnection {
@@ -43,16 +40,17 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
 
     private Handler<ProxyResponse> responseHandler;
     private Buffer content;
-    private final ContentBasedRoutingPolicyConfiguration configuration;
     private final ExecutionContext context;
+    private final ContentBasedRoutingEndpoint endpoint;
 
     private final Request originalRequest;
     private final Vertx vertx;
 
-    public ContentBasedRoutingConnection(ExecutionContext executionContext, ContentBasedRoutingPolicyConfiguration configuration) {
-        this.configuration = configuration;
+    public ContentBasedRoutingConnection(ExecutionContext executionContext, ContentBasedRoutingEndpoint endpoint) {
+        this.endpoint = endpoint;
         this.context = executionContext;
         this.originalRequest = executionContext.request();
+
         this.vertx = executionContext.getComponent(Vertx.class);
     }
 
@@ -76,7 +74,7 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
 
         if (!StringUtils.isEmpty(messageBody) && isJsonCall()) {
             vertx.executeBlocking(promise -> {
-                ContentBasedRoutingEndpoint.getEndpoints(messageBody, configuration)
+                endpoint.getEndpoints(messageBody)
                         .forEach(endpoint -> callUrl(endpoint, messageBody, httpMethod, originalHeaders));
                 promise.complete();
             }, false, null);

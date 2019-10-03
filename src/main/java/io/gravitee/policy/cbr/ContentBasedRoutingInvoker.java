@@ -23,15 +23,15 @@ import io.gravitee.gateway.api.proxy.ProxyConnection;
 import io.gravitee.gateway.api.stream.ReadStream;
 
 public class ContentBasedRoutingInvoker implements Invoker {
-    final ContentBasedRoutingPolicyConfiguration configuration;
+    final ContentBasedRoutingEndpoint endpoint;
 
     public ContentBasedRoutingInvoker(ContentBasedRoutingPolicyConfiguration configuration) {
-        this.configuration = configuration;
+        this.endpoint = new ContentBasedRoutingEndpoint(configuration);
     }
 
     @Override
     public void invoke(ExecutionContext executionContext, ReadStream<Buffer> readStream, Handler<ProxyConnection> connectionHandler) {
-        final ContentBasedRoutingConnection connection = new ContentBasedRoutingConnection(executionContext, configuration);
+        final ContentBasedRoutingConnection connection = new ContentBasedRoutingConnection(executionContext, endpoint);
 
         // Return connection to backend
         connectionHandler.handle(connection);

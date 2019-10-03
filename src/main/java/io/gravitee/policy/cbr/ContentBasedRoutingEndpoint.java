@@ -25,11 +25,17 @@ import java.util.List;
 import java.util.Map;
 
 
-public abstract class ContentBasedRoutingEndpoint {
+public class ContentBasedRoutingEndpoint {
 
     private static final Logger logger = LoggerFactory.getLogger(ContentBasedRoutingConnection.class);
 
-    public static List<String> getEndpoints(String messageBody, ContentBasedRoutingPolicyConfiguration configuration) {
+    private ContentBasedRoutingPolicyConfiguration configuration;
+
+    public ContentBasedRoutingEndpoint(ContentBasedRoutingPolicyConfiguration configuration) {
+        this.configuration = configuration;
+    }
+
+    public List<String> getEndpoints(String messageBody) {
         String extractResult = JsonPath.parse(messageBody).read(configuration.getJsonpathExpression(), String.class);
         Map<String, List<String>> routingTable = new Gson().fromJson(configuration.getRoutingTable(), Map.class);
 
