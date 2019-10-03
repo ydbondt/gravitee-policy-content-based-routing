@@ -8,10 +8,11 @@ import io.gravitee.gateway.api.buffer.Buffer;
 import io.gravitee.gateway.api.handler.Handler;
 import io.gravitee.gateway.api.proxy.ProxyResponse;
 import io.vertx.core.Vertx;
-import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerRequest;
+import io.vertx.ext.unit.TestCompletion;
+import io.vertx.ext.unit.TestContext;
+import io.vertx.ext.unit.TestSuite;
 import io.vertx.junit5.VertxExtension;
-import io.vertx.junit5.VertxTestContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,10 +22,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -51,8 +50,9 @@ public class ContentBasedRoutingConnectionTest {
     private Handler<ProxyResponse> responseHandler;
 
     @Test
-    public void testHostHeader_shouldBeOverridden() throws Throwable {
+    public void testHostHeader_shouldBeOverridden() {
 
+        TestSuite suite = TestSuite.create("host_header");
         Buffer contentBuffer = Buffer.buffer("{ \"foo\": \"bar\" }");
 
         HttpHeaders httpHeaders = new HttpHeaders();
@@ -62,46 +62,56 @@ public class ContentBasedRoutingConnectionTest {
         httpHeaders.add(HttpHeaders.ORIGIN, "foobar");
         httpHeaders.add(HttpHeaders.HOST, "api.gravitee.io");
 
-        VertxTestContext testContext = new VertxTestContext();
-        Vertx vertx = testVertx(testContext, (request) -> {
-            assertThat(request.getHeader(HttpHeaders.ACCEPT)).isEqualTo(httpHeaders.get(HttpHeaders.ACCEPT));
-            assertThat(request.getHeader(HttpHeaders.CONTENT_TYPE)).isEqualTo(httpHeaders.get(HttpHeaders.CONTENT_TYPE));
-            assertThat(request.getHeader(HttpHeaders.ORIGIN)).isEqualTo(httpHeaders.get(HttpHeaders.ORIGIN));
-            assertThat(request.getHeader(HttpHeaders.HOST)).isEqualTo("localhost");
+        suite.before((testContext) -> {
+            Vertx vertx = testVertx(testContext, (request) -> {
+                testContext.assertEquals(request.getHeader(HttpHeaders.ACCEPT), httpHeaders.get(HttpHeaders.ACCEPT).get(0));
+                testContext.assertEquals(request.getHeader(HttpHeaders.CONTENT_TYPE), httpHeaders.get(HttpHeaders.CONTENT_TYPE).get(0));
+                testContext.assertEquals(request.getHeader(HttpHeaders.ORIGIN), httpHeaders.get(HttpHeaders.ORIGIN).get(0));
+                testContext.assertEquals(request.getHeader(HttpHeaders.HOST), "localhost");
+            });
+
+            when(executionContext.request()).thenReturn(request);
+            when(request.method()).thenReturn(HttpMethod.POST);
+            when(executionContext.getComponent(Vertx.class)).thenReturn(vertx);
+            when(request.headers()).thenReturn(httpHeaders);
+            when(endpoint.getEndpoints(any())).thenReturn(Collections.singletonList("http://localhost:16969/"));
         });
 
-        when(executionContext.request()).thenReturn(request);
-        when(request.method()).thenReturn(HttpMethod.POST);
-        when(executionContext.getComponent(Vertx.class)).thenReturn(vertx);
-        when(request.headers()).thenReturn(httpHeaders);
-        when(endpoint.getEndpoints(any())).thenReturn(Collections.singletonList("http://localhost:16969/"));
+        suite.test("should_be_overridden", context -> {
+            ContentBasedRoutingConnection connection = new ContentBasedRoutingConnection(executionContext, endpoint);
 
-        ContentBasedRoutingConnection connection = new ContentBasedRoutingConnection(executionContext, endpoint);
+            connection.responseHandler((result -> {
+                System.out.println(result.headers().values());
+            }));
+            connection.write(contentBuffer);
+            connection.end();
 
-        connection.responseHandler(responseHandler);
-        connection.write(contentBuffer);
-        connection.end();
+            context.async().awaitSuccess(1000);
+        });
+
+        TestCompletion completion = suite.run();
+        completion.awaitSuccess();
 
     }
 
-    private Vertx testVertx(VertxTestContext testContext, Consumer<HttpServerRequest> testFunction) throws Throwable {
-        Vertx vertx = Vertx.vertx();
-        HttpServer server = vertx.createHttpServer()
-                .requestHandler(req -> {
-                    testFunction.accept(req);
-                    req.response().end();
-                })
-                .listen(16969, testContext.completing());
+    private Vertx testVertx(TestContext testContext, Consumer<HttpServerRequest> testFunction) {
+        try {
+            Vertx vertx = Vertx.vertx();
+            vertx.createHttpServer()
+                    .requestHandler(req -> {
+                        testFunction.accept(req);
+                        req.response().setStatusCode(200);
+                        req.response().end();
+                    })
+                    .listen(16969, ar -> {
+                        //testContext.async().await();
+                    });
 
-        assertThat(testContext.awaitCompletion(2, TimeUnit.SECONDS)).isTrue();
 
-        if (testContext.failed()) {
-            throw testContext.causeOfFailure();
-        } else {
-            log.info("Service started at port {}", server.actualPort());
+            return vertx;
+        } catch (Throwable e) {
+            throw new IllegalArgumentException(e);
         }
-
-        return vertx;
     }
 
 }
