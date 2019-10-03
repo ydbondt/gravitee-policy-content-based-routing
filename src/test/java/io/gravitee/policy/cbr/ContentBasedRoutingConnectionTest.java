@@ -9,10 +9,8 @@ import io.gravitee.gateway.api.handler.Handler;
 import io.gravitee.gateway.api.proxy.ProxyResponse;
 import io.vertx.core.Vertx;
 import io.vertx.core.http.HttpServerRequest;
-import io.vertx.ext.unit.TestCompletion;
-import io.vertx.ext.unit.TestContext;
-import io.vertx.ext.unit.TestSuite;
 import io.vertx.junit5.VertxExtension;
+import io.vertx.junit5.VertxTestContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -22,8 +20,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -50,10 +50,11 @@ public class ContentBasedRoutingConnectionTest {
     private Handler<ProxyResponse> responseHandler;
 
     @Test
-    public void testHostHeader_shouldBeOverridden() {
+    public void testHostHeader_shouldBeOverridden() throws InterruptedException {
 
-        TestSuite suite = TestSuite.create("host_header");
         Buffer contentBuffer = Buffer.buffer("{ \"foo\": \"bar\" }");
+
+        VertxTestContext testContext = new VertxTestContext();
 
         HttpHeaders httpHeaders = new HttpHeaders();
         httpHeaders.add(HttpHeaders.ACCEPT, "application/json");
@@ -62,39 +63,31 @@ public class ContentBasedRoutingConnectionTest {
         httpHeaders.add(HttpHeaders.ORIGIN, "foobar");
         httpHeaders.add(HttpHeaders.HOST, "api.gravitee.io");
 
-        suite.before((testContext) -> {
-            Vertx vertx = testVertx(testContext, (request) -> {
-                testContext.assertEquals(request.getHeader(HttpHeaders.ACCEPT), httpHeaders.get(HttpHeaders.ACCEPT).get(0));
-                testContext.assertEquals(request.getHeader(HttpHeaders.CONTENT_TYPE), httpHeaders.get(HttpHeaders.CONTENT_TYPE).get(0));
-                testContext.assertEquals(request.getHeader(HttpHeaders.ORIGIN), httpHeaders.get(HttpHeaders.ORIGIN).get(0));
-                testContext.assertEquals(request.getHeader(HttpHeaders.HOST), "localhost");
-            });
-
-            when(executionContext.request()).thenReturn(request);
-            when(request.method()).thenReturn(HttpMethod.POST);
-            when(executionContext.getComponent(Vertx.class)).thenReturn(vertx);
-            when(request.headers()).thenReturn(httpHeaders);
-            when(endpoint.getEndpoints(any())).thenReturn(Collections.singletonList("http://localhost:16969/"));
+        Vertx vertx = testVertx(testContext, (request) -> {
+            assertThat(request.getHeader(HttpHeaders.ACCEPT)).isEqualTo(httpHeaders.get(HttpHeaders.ACCEPT).get(0));
+            assertThat(request.getHeader(HttpHeaders.CONTENT_TYPE)).isEqualTo(httpHeaders.get(HttpHeaders.CONTENT_TYPE).get(0));
+            assertThat(request.getHeader(HttpHeaders.ORIGIN)).isEqualTo(httpHeaders.get(HttpHeaders.ORIGIN).get(0));
+            assertThat(request.getHeader(HttpHeaders.HOST)).isEqualTo("localhost");
         });
 
-        suite.test("should_be_overridden", context -> {
-            ContentBasedRoutingConnection connection = new ContentBasedRoutingConnection(executionContext, endpoint);
+        when(executionContext.request()).thenReturn(request);
+        when(request.method()).thenReturn(HttpMethod.POST);
+        when(executionContext.getComponent(Vertx.class)).thenReturn(vertx);
+        when(request.headers()).thenReturn(httpHeaders);
+        when(endpoint.getEndpoints(any())).thenReturn(Collections.singletonList("http://localhost:16969/"));
 
-            connection.responseHandler((result -> {
-                System.out.println(result.headers().values());
-            }));
-            connection.write(contentBuffer);
-            connection.end();
+        ContentBasedRoutingConnection connection = new ContentBasedRoutingConnection(executionContext, endpoint);
 
-            context.async().awaitSuccess(1000);
-        });
+        connection.responseHandler(responseHandler);
+        connection.write(contentBuffer);
+        connection.end();
 
-        TestCompletion completion = suite.run();
-        completion.awaitSuccess();
+        assertThat(testContext.awaitCompletion(1, TimeUnit.SECONDS)).isTrue();
+
 
     }
 
-    private Vertx testVertx(TestContext testContext, Consumer<HttpServerRequest> testFunction) {
+    private Vertx testVertx(VertxTestContext testContext, Consumer<HttpServerRequest> testFunction) {
         try {
             Vertx vertx = Vertx.vertx();
             vertx.createHttpServer()
@@ -103,9 +96,7 @@ public class ContentBasedRoutingConnectionTest {
                         req.response().setStatusCode(200);
                         req.response().end();
                     })
-                    .listen(16969, ar -> {
-                        //testContext.async().await();
-                    });
+                    .listen(16969);
 
 
             return vertx;
