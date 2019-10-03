@@ -73,11 +73,8 @@ public class ContentBasedRoutingConnection implements ProxyConnection {
         logger.debug("Message body: " + messageBody + ", method: " + httpMethod);
 
         if (!StringUtils.isEmpty(messageBody) && isJsonCall()) {
-            vertx.executeBlocking(promise -> {
-                endpoint.getEndpoints(messageBody)
-                        .forEach(endpoint -> callUrl(endpoint, messageBody, httpMethod, originalHeaders));
-                promise.complete();
-            }, false, null);
+            endpoint.getEndpoints(messageBody)
+                    .forEach(endpoint -> callUrl(endpoint, messageBody, httpMethod, originalHeaders));
         }
 
         responseHandler.handle(new SuccessResponse());
