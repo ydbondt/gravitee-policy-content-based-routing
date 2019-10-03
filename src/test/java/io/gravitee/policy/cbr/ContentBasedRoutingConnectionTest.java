@@ -51,49 +51,49 @@ public class ContentBasedRoutingConnectionTest {
     private Handler<ProxyResponse> responseHandler;
 
     @Test
-    public void testHostHeader_shouldNotBeOverridden() throws InterruptedException, Throwable {
+    public void testHostHeader_shouldBeOverridden() throws Throwable {
 
-        when(executionContext.request()).thenReturn(request);
-        when(request.method()).thenReturn(HttpMethod.POST);
+        Buffer contentBuffer = Buffer.buffer("{ \"foo\": \"bar\" }");
 
         HttpHeaders httpHeaders = new HttpHeaders();
         httpHeaders.add(HttpHeaders.ACCEPT, "application/json");
         httpHeaders.add(HttpHeaders.CONTENT_TYPE, "application/json");
+        httpHeaders.add(HttpHeaders.CONTENT_LENGTH, ""+contentBuffer.getBytes().length);
         httpHeaders.add(HttpHeaders.ORIGIN, "foobar");
         httpHeaders.add(HttpHeaders.HOST, "api.gravitee.io");
 
         VertxTestContext testContext = new VertxTestContext();
-        when(executionContext.getComponent(Vertx.class)).thenReturn(testVertx(testContext, (request) -> {
+        Vertx vertx = testVertx(testContext, (request) -> {
             assertThat(request.getHeader(HttpHeaders.ACCEPT)).isEqualTo(httpHeaders.get(HttpHeaders.ACCEPT));
             assertThat(request.getHeader(HttpHeaders.CONTENT_TYPE)).isEqualTo(httpHeaders.get(HttpHeaders.CONTENT_TYPE));
             assertThat(request.getHeader(HttpHeaders.ORIGIN)).isEqualTo(httpHeaders.get(HttpHeaders.ORIGIN));
             assertThat(request.getHeader(HttpHeaders.HOST)).isEqualTo("localhost");
-        }));
+        });
 
+        when(executionContext.request()).thenReturn(request);
+        when(request.method()).thenReturn(HttpMethod.POST);
+        when(executionContext.getComponent(Vertx.class)).thenReturn(vertx);
         when(request.headers()).thenReturn(httpHeaders);
         when(endpoint.getEndpoints(any())).thenReturn(Collections.singletonList("http://localhost:16969/"));
+
         ContentBasedRoutingConnection connection = new ContentBasedRoutingConnection(executionContext, endpoint);
+
         connection.responseHandler(responseHandler);
-
-
-        connection.write(Buffer.buffer("{ \"foo\": \"bar\" }"));
+        connection.write(contentBuffer);
         connection.end();
-
-
-
 
     }
 
-    private Vertx testVertx(VertxTestContext testContext, Consumer<HttpServerRequest> testFunction) throws InterruptedException, Throwable {
+    private Vertx testVertx(VertxTestContext testContext, Consumer<HttpServerRequest> testFunction) throws Throwable {
         Vertx vertx = Vertx.vertx();
         HttpServer server = vertx.createHttpServer()
                 .requestHandler(req -> {
                     testFunction.accept(req);
                     req.response().end();
-                    testContext.completeNow();
                 })
                 .listen(16969, testContext.completing());
-        assertThat(testContext.awaitCompletion(100, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(testContext.awaitCompletion(2, TimeUnit.SECONDS)).isTrue();
 
         if (testContext.failed()) {
             throw testContext.causeOfFailure();
